@@ -1,1 +1,4092 @@
-TEst
+## Gregory Lewis, Immunity is Maladptive, 'neat' code ##
+
+## 0: loading library ##
+
+library(abind)
+library(raster)
+library(car)
+library(simecol)
+library(sfsmisc)
+library(nnet)
+library(ggplot2)
+library(tidyr)
+library(reshape)
+library(rasterVis)
+
+## 0.1: theme ##
+
+gjltheme <- theme(axis.line = element_line(colour ="black"), panel.grid = element_line(colour = "grey"), legend.title=element_blank())
+
+## 1 Baseline case ##
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) 
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10)
+  pV <- pV + mV
+  
+  ### Fitness calculation
+  hF <- hI - pV - (0.1 * hI) 
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) 
+  
+  ### Competition
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+       if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+         lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+            d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+
+              if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+              if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+              if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+              if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+              if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+              if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+              if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+              if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+
+}
+
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+       aes(x=generation, y=value, colour=variable)) +
+        geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run1series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun1.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun1.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun1.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun1.csv') #storing final pF grid
+
+png(filename='plot1.png')
+p
+dev.off()
+
+######
+
+## 2a Model fidelity ('super immunity') ##
+
+##Changes: 1) no mutation, 2) half host grid has higher immunity, expecting to see is population take over the grid
+
+hI1 <- matrix(0,10,5)  
+hI2 <- matrix(10,10,5)
+hI <- cbind(hI1,hI2)
+pV <- matrix(0,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run2aseries.csv') #Storing time series
+
+hIrun2a <- hI
+pVrun2a <- pV
+hFrun2a <- hF
+pFrun2a <- pF
+
+write.csv(hIrun2a, 'hIrun2a.csv') #storing final hI grid
+write.csv(pVrun2a, 'pVrun2a.csv') #storing final pV grid
+write.csv(hFrun2a, 'hFrun2a.csv') #storing final hF grid
+write.csv(pFrun2a, 'pFrun2a.csv') #storing final pF grid
+
+png(filename='plot2a.png')
+p
+dev.off()
+
+
+########
+
+## 2b Fidelity tests - 'supervirulence' ##
+
+##Changes 1) no mutation, 2) half of pathogens have high virulence, expect these to be replaced by the lower/closer matched virulence.
+
+hI <- matrix(0,10,10)  # Host immunity
+pV1 <- matrix(0,10,5)  # Pathogen virulence
+pV2 <- matrix(10,10,5)
+pV <- cbind(pV1, pV2)
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run2bseries.csv') #Storing time series
+
+hIrun2b <- hI
+pVrun2b <- pV
+hFrun2b <- hF
+pFrun2b <- pF
+
+write.csv(hIrun2b, 'hIrun2b.csv') #storing final hI grid
+write.csv(pVrun2b, 'pVrun2b.csv') #storing final pV grid
+write.csv(hFrun2b, 'hFrun2b.csv') #storing final hF grid
+write.csv(pFrun2b, 'pFrun2b.csv') #storing final pF grid
+
+png(filename='plot2b.png')
+p
+dev.off()
+
+
+##### Fidelity test 2c - 'split optimal virulence'
+
+##Disabling host mutation and competition, half at 10 and 0, expecting pathogen virulence to mirror this pattern.
+
+hI1 <- matrix(0,10,5)  # Host immunity
+hI2 <- matrix(10,10,5)
+hI <- cbind(hI1, hI2)
+pV <- matrix(5,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts - not done for this test.
+  
+
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+plot2c2 <- levelplot(raster(pV), margin=F, xlab = "x", ylab = "y", scales=list(x=list(at=c(0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95), labels=c(1:10)), y=list(at=c(0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95), labels=c(10:1))), colorkey = list(title="V"))
+
+
+###storing final data
+write.csv(baselinedata2, 'run2aseries.csv') #Storing time series
+
+hIrun2c <- hI
+pVrun2c <- pV
+hFrun2c <- hF
+pFrun2c <- pF
+
+write.csv(hIrun2c, 'hIrun2c.csv') #storing final hI grid
+write.csv(pVrun2c, 'pVrun2c.csv') #storing final pV grid
+write.csv(hFrun2c, 'hFrun2c.csv') #storing final hF grid
+write.csv(pFrun2c, 'pFrun2c.csv') #storing final pF grid
+
+png(filename='plot2c.png')
+p
+dev.off()
+
+png(filename='plot2c2.png')
+plot2c2
+dev.off()
+
+
+#######
+
+## 3ai - senstivity analysis/grid/size/2x1 Baseline case ##
+
+###Changes to a 2-cell model
+
+hI <- matrix(1,1,2)  # Host immunity
+pV <- matrix(1,1,2)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  ##Adapting to be (pseudo)random rather than deterministic given small cell size
+  
+  rI <- runif(1, min=0, max=50)
+    if (rI <1) {
+      mI <- sample(c(0,1), 2)
+      hI <- hI + mI
+    }
+    if (rI > 49) {
+      mI <- sample(c(-1,0),2)
+      hI <- hI + mI
+    }  
+  
+  rV <- runif(1, min=0, max=50)
+    if (rV <1) {
+      mV <- sample(c(0,1), 2)
+      pV <- pV + mV
+    }
+  if (rI > 49) {
+      mI <- sample(c(-1,0),2)
+      hI <- hI + mI
+    }  
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ## Skipping torification step as redundant - replacing with 'alternative' cell if outcompeted.
+
+  #### Pathogen
+    cpF <- mean(pF)
+  
+    if(pF[1,1]<cpF) { 
+      pV[1,1] <- pV[1,2]
+    }
+       
+    if(pF[1,2]<cpF) {
+      pV[1,2] <- pV[1,1]
+    }
+  
+  #### Hosts
+    chF <- mean(hF)
+    
+    if(hF[1,1] < chF) { 
+      hI[1,1] <- hI[1,2]
+    }
+    
+    if(hF[1,2]< chF) {
+      hI[1,2] <- hI[1,1]
+    }
+    
+
+  ###Loose ends
+  
+  shI[i] <- hI[1,1]
+  spV[i] <- pV[1,1]
+  shF[i] <- hF[1,1]
+  spF[i] <- pF[1,1]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3aiseries.csv') #Storing time series
+
+hIrun3ai <- hI
+pVrun3ai <- pV
+hFrun3ai <- hF
+pFrun3ai <- pF
+
+write.csv(hIrun3ai, 'hIrun3ai.csv') #storing final hI grid
+write.csv(pVrun3ai, 'pVrun3ai.csv') #storing final pV grid
+write.csv(hFrun3ai, 'hFrun3ai.csv') #storing final hF grid
+write.csv(pFrun3ai, 'pFrun3ai.csv') #storing final pF grid
+
+png(filename='plot3ai.png')
+p
+dev.off()
+
+
+## 3aii sensiivity analysis/grid size/100x100 ##
+
+##Changes - only to a larger grid
+
+hI <- matrix(1,100,100)  # Host immunity
+pV <- matrix(1,100,100)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(100,9800,100))), 100) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(200,9600,200))), 100) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[100,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,100], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[100,], pV, pV[1,])
+  pV2 <- cbind(pV2[,100], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[100,], hF, hF[1,])
+  hF2 <- cbind(hF2[,100], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[100,], pF, pF[1,])
+  pF2 <- cbind(pF2[,100], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:101) {
+    for (x in 2:101) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:101) {
+    for (x in 2:101) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:101, 2:101]
+  pV <- pV2[2:101, 2:101]
+  hF <- hF2[2:101, 2:101]
+  pF <- pF2[2:101, 2:101]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3aiiseries.csv') #Storing time series
+
+hIrun3aii <- hI
+pVrun3aii <- pV
+hFrun3aii <- hF
+pFrun3aii <- pF
+
+write.csv(hIrun1, 'hIrun3aii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3aii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3aii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3aii.csv') #storing final pF grid
+
+png(filename='plot3aii.png')
+p
+dev.off()
+
+#######
+
+## 3bi sensitivity/mutation rates/doubling ##
+
+##Changes: doubling mutation rates for both host and pathogens, expecing similar (but accelerated) trends
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(4,92,4))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3biseries.csv') #Storing time series
+
+hIrunbi <- hI
+pVrunbi <- pV
+hFrunbi <- hF
+pFrunbi <- pF
+
+write.csv(hIrunbi, 'hIrun3bi.csv') #storing final hI grid
+write.csv(pVrunbi, 'pVrun3bi.csv') #storing final pV grid
+write.csv(hFrunbi, 'hFrun3bi.csv') #storing final hF grid
+write.csv(pFrunbi, 'pFrun3bi.csv') #storing final pF grid
+
+png(filename='plot3bi.png')
+p
+dev.off()
+
+
+######
+
+## 3bii sensitivity/mutation rates/halving ##
+
+##Changes: halving mutation rates for both host and pathogens, expecing similar (but decellerated) trends
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(sample(c(-1,1), 1),0), c(1,99))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3biiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3bii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3bii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3bii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3bii.csv') #storing final pF grid
+
+png(filename='plot3bii.png')
+p
+dev.off()
+
+
+
+######
+
+## 3biii sensitivity/mutation rates/positive bias ##
+
+##Changes: 2:1 ratio of +ve:-ve mutations for immunity and virulence, expecting qualitatively similar but faster escalation
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,97,2))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,94,4))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3biiiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3biii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3biii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3biii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3biii.csv') #storing final pF grid
+
+png(filename='plot3biii.png')
+p
+dev.off()
+
+######
+
+## 3biv sensitivity/mutation rates/negative bias ##
+
+##Changes: 1:2 ratio of +ve:-ve mutations for immunity and virulence, expecting qualitatively similar but slower escalation
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(2,97,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(4,94,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3bivseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3biv.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3biv.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3biv.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3biv.csv') #storing final pF grid
+
+png(filename='plot3biv.png')
+p
+dev.off()
+
+######
+
+###storing final data
+hIrun3biv <- hI
+pVrun3biv <- pV
+hFrun3biv <- hF
+pFrun3biv <- pF
+
+## Diagramming
+Generation <- 1:2000
+
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_dark()
+plot3biv <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+
+
+######
+
+## 3ci sensitivity/cost = 0.01 ##
+
+###As 1, but reducing costs by factor of 10, still expecting similar behaviour (but may need to iterate further to show -ve fitness trend)
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.01 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.01 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3ciseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3ci.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3ci.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3ci.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3ci.csv') #storing final pF grid
+
+png(filename='plot3ci.png')
+p
+dev.off()
+
+
+
+## 3cii sensitivity/cost = 0.2 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.2 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.2 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c2series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c2.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c2.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c2.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c2.csv') #storing final pF grid
+
+png(filename='plot3c2.png')
+p
+dev.off()
+
+
+## 3ciii sensitivity/cost = 0.3 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.3 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.3 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c3series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c3.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c3.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c3.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c3.csv') #storing final pF grid
+
+png(filename='plot3c3.png')
+p
+dev.off()
+
+
+######
+
+## 3ciii sensitivity/cost = 0.4 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.4 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.4 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c4series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c4.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c4.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c4.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c4.csv') #storing final pF grid
+
+png(filename='plot3c4.png')
+p
+dev.off()
+
+
+######
+
+## 3ciii sensitivity/cost = 0.5 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.5 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.5 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c5series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c5.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c5.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c5.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c5.csv') #storing final pF grid
+
+png(filename='plot3c5.png')
+p
+dev.off()
+
+
+
+## 3ciii sensitivity/cost = 0.6 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.6 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.6 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c6series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c6.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c6.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c6.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c6.csv') #storing final pF grid
+
+png(filename='plot3c6.png')
+p
+dev.off()
+
+
+######
+
+
+## 3ciii sensitivity/cost = 0.7 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.7 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.7 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c7series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c7.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c7.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c7.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c7.csv') #storing final pF grid
+
+png(filename='plot3c7.png')
+p
+dev.off()
+
+######
+
+
+## 3ciii sensitivity/cost = 0.8 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.8 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.8 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c8series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c8.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c8.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c8.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c8.csv') #storing final pF grid
+
+png(filename='plot3c8.png')
+p
+dev.off()
+
+######
+
+## 3ciii sensitivity/cost = 0.9 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.9 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.9 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c9series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c9.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c9.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c9.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c9.csv') #storing final pF grid
+
+png(filename='plot3c9.png')
+p
+dev.off()
+
+######
+
+
+## 3ciii sensitivity/cost = 1 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c10series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c10.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c10.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c10.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c10.csv') #storing final pF grid
+
+png(filename='plot3c10.png')
+p
+dev.off()
+
+######
+
+
+## 3ciii sensitivity/cost = 1.1 ##
+
+###Increasing cost increments - expecting qualitatively similar for 0.2-0.9 (but accelerating fitness cost), 1.0 to show random walk like behaviour, and 1.1 to invert.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (1.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (1.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run3c11series.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun3c11.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun3c11.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun3c11.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun3c10.csv') #storing final pF grid
+
+png(filename='plot3c11.png')
+p
+dev.off()
+
+######
+
+## 4ai Further analysis/host-initiated arms race, no I increments ##
+
+## Changing to prevent +ve I mutations. Expecting V to remain at/near baseline.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0), c(2,98))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run4aiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4ai.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4ai.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4ai.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4ai.csv') #storing final pF grid
+
+png(filename='plot4ai.png')
+p
+dev.off()
+
+######
+
+
+## 4aii Further analysis/host-initiated arms race, no V increments ##
+
+## Changing to prevent +ve V mutations. Expecting similar to baseline behaviour.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0), c(4,96))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness") ## dropping pathogen fitness as very negative values
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+baselinedata2 <- melt(baselinedata, id="generation")
+write.csv(baselinedata2, 'run4aiiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4aii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4aii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4aii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4aii.csv') #storing final pF grid
+
+png(filename='plot4aii.png')
+p
+dev.off()
+
+
+#####
+
+## 4bi Further analysis/ratcheting/halting I##
+
+##changes - add further 2000 iterations where host +ve mutation step disabled, expecting variables to remain staticish
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 4000)
+spV <- rep(0, 4000)
+shF <- rep(0, 4000)
+spF <- rep(0, 4000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+#### Second stage
+
+for(i in 2001:4000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0), c(2,98))), 10) ##disabling the +ve mutation step
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:4000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run4biseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4bi.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4bi.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4bi.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4bi.csv') #storing final pF grid
+
+png(filename='plot4bi.png')
+p
+dev.off()
+
+
+#####
+
+## 4bii Further analysis/ratcheting/halting I and resetting##
+
+##changes - add further 2000 iterations where host +ve mutation step disabled and resetting zero, expecting V to start falling
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 4000)
+spV <- rep(0, 4000)
+shF <- rep(0, 4000)
+spF <- rep(0, 4000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+#### Second stage
+
+hI <- matrix(0,10,10) ## the reset stage
+
+for(i in 2001:4000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0), c(2,98))), 10) ##disabling the +ve mutation step
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:4000
+baselinedata <- data.frame(Generation, shI, spV, shF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness") ## dropping pathogen fitness as very negative values
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+Generation <- 1:4000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+baselinedata2 <- melt(baselinedata, id="generation")
+write.csv(baselinedata2, 'run4biiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4bii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4bii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4bii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4bii.csv') #storing final pF grid
+
+png(filename='plot4bii.png')
+p
+dev.off()
+
+######
+
+## 4c Further investigations/increasing host mutation rate ##
+
+###Changes: Upping host mutation rate, expecting the host to 'outrace', and so gain fitness.
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(10,80,10))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness") ## dropping pathogen fitness as very negative values
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+baselinedata2 <- melt(baselinedata, id="generation")
+write.csv(baselinedata2, 'run4cseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4c.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4c.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4c.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4c.csv') #storing final pF grid
+
+png(filename='plot4c.png')
+p
+dev.off()
+
+######
+
+#####
+## 4di further analysis/maintenance costs/quadratic costs##
+
+## Changes: Quadratic cost terms, thus expecting I (and V) to approach steady values 
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI^2) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * pV^2) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run4diseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4di.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4di.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4di.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4di.csv') #storing final pF grid
+
+png(filename='plot4di.png')
+p
+dev.off()
+
+######
+
+## 4dii further analysis, even more steeply decreasing pathogen costs ##
+
+##changes: hosts stabilized by quadratic term, but pathogens stabilised by expoentiated maintenance term, thus giving (we expect) independently constrained steady states
+
+hI <- matrix(1,10,10)  # Host immunity
+pV <- matrix(1,10,10)  # Pathogen virulence
+
+### Pre-populating Time series
+shI <- rep(0, 2000)
+spV <- rep(0, 2000)
+shF <- rep(0, 2000)
+spF <- rep(0, 2000)
+
+for(i in 1:2000) {
+  
+  ### Mutation stage
+  
+  mI <- matrix(sample(rep(c(-1,0,1), c(1,98,1))), 10) ##Slightly deterministic, but only for ease's sake.
+  hI <- hI + mI
+  mV <- matrix(sample(rep(c(-1,0,1), c(2,96,2))), 10) ##As above, with a 'doubled' mutatability
+  pV <- pV + mV
+  
+  ### Fitness calculation (ignoring equilibrium effects)
+  hF <- hI - pV - (0.1 * hI^2) #Host fitness (simple)
+  pF <- -1*(hI - pV)^2 - (0.1 * exp(pV)) #Pathogen fitness (simple)
+  
+  ### Competition  
+  
+  ####'Torification' of the variables
+  hI2 <- rbind(hI[10,], hI, hI[1,])  ##hI2 as seperate index to compute host and pathogen updates in parallel (i.e., pathogen computation needs access to 'original' hI matrix)
+  hI2 <- cbind(hI2[,10], hI2, hI2[,1])
+  
+  pV2 <- rbind(pV[10,], pV, pV[1,])
+  pV2 <- cbind(pV2[,10], pV2, pV2[,1])
+  
+  hF2 <- rbind(hF[10,], hF, hF[1,])
+  hF2 <- cbind(hF2[,10], hF2, hF2[,1])
+  
+  pF2 <- rbind(pF[10,], pF, pF[1,])
+  pF2 <- cbind(pF2[,10], pF2, pF2[,1])
+  
+  #### Pathogen
+  cpF <- eightneighbors(pF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(pF2[y,x]<cpF[y,x]) { ## Only including those which fare worse than competitive average
+        lpF2 <- rbind(pF2[(y-1),(x-1):(x+1)], pF2[(y),(x-1):(x+1)], pF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        d <- which.is.max(lpF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(d == 1) {pV2[y,x] <- pV2[(y-1), (x-1)]} ## Direction-wise substitution of pathogen
+        if(d == 2) {pV2[y,x] <- pV2[(y), (x-1)]}
+        if(d == 3) {pV2[y,x] <- pV2[(y+1), (x-1)]}
+        if(d == 4) {pV2[y,x] <- pV2[(y-1), (x)]}
+        if(d == 6) {pV2[y,x] <- pV2[(y+1), (x)]}
+        if(d == 7) {pV2[y,x] <- pV2[(y-1), (x+1)]}
+        if(d == 8) {pV2[y,x] <- pV2[(y), (x+1)]}
+        if(d == 9) {pV2[y,x] <- pV2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  #### Hosts
+  
+  chF <- eightneighbors(hF2)/8 ##pre-computing competitive pressure to be slightly more performant
+  for (y in 2:11) {
+    for (x in 2:11) { ##interating across the 'inside' (unwrapped) torus positions
+      if(hF2[y,x]<chF[y,x]) { ## Only including those which fare worse than competitive average
+        lhF2 <- rbind(hF2[(y-1),(x-1):(x+1)], hF2[(y),(x-1):(x+1)], hF2[(y+1),(x-1):(x+1)]) ##Local matrix
+        e <- which.is.max(lhF2) ## Finding position/direction of maximal element (which.is.max breaks ties at random)
+        
+        if(e == 1) {  ## Directionwise substitution of hosts and corresponding pathogens
+          hI2[y,x] <- hI2[(y-1), (x-1)]}
+        if(e == 2) {
+          hI2[y,x] <- hI2[(y), (x-1)]}
+        if(e == 3) {
+          hI2[y,x] <- hI2[(y+1), (x-1)]}
+        if(e == 4) {
+          hI2[y,x] <- hI2[(y-1), (x)]}
+        if(e == 6) {
+          hI2[y,x] <- hI2[(y+1), (x)]}
+        if(e == 7) {
+          hI2[y,x] <- hI2[(y-1), (x+1)]}
+        if(e == 8) {
+          hI2[y,x] <- hI2[(y), (x+1)]}
+        if(e == 9) {
+          hI2[y,x] <- hI2[(y+1), (x+1)]}
+      }
+    }
+  }
+  
+  ###Loose ends
+  
+  hI <- hI2[2:11, 2:11]
+  pV <- pV2[2:11, 2:11]
+  hF <- hF2[2:11, 2:11]
+  pF <- pF2[2:11, 2:11]
+  
+  shI[i] <- hI[5,5]
+  spV[i] <- pV[5,5]
+  shF[i] <- hF[5,5]
+  spF[i] <- pF[5,5]
+  
+}
+
+## Diagramming
+Generation <- 1:2000
+baselinedata <- data.frame(Generation, shI, spV, shF, spF)
+names(baselinedata) <- c("generation", "Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness")
+
+baselinedata2 <- melt(baselinedata, id="generation")
+
+p <- ggplot(data = baselinedata2, 
+            aes(x=generation, y=value, colour=variable)) +
+  geom_line() 
+p <- p + theme_linedraw()
+p <- p + scale_fill_discrete(name= "Variable", labels=c("Host Immunity", "Pathogen Virulence", "Host Fitness", "Pathogen Fitness"))
+p <- p + gjltheme
+p <- p + geom_hline(yintercept = 0, color = "black") + scale_x_continuous(expand=c(0,0))
+
+
+###storing final data
+write.csv(baselinedata2, 'run4diiseries.csv') #Storing time series
+
+hIrun1 <- hI
+pVrun1 <- pV
+hFrun1 <- hF
+pFrun1 <- pF
+
+write.csv(hIrun1, 'hIrun4dii.csv') #storing final hI grid
+write.csv(pVrun1, 'pVrun4dii.csv') #storing final pV grid
+write.csv(hFrun1, 'hFrun4dii.csv') #storing final hF grid
+write.csv(pFrun1, 'pFrun4dii.csv') #storing final pF grid
+
+png(filename='plot4dii.png')
+p
+dev.off()
+
+######
