@@ -536,7 +536,8 @@ b = trapz(sBDFD20,BDFP20)
 c = trapz(sOD20,OP20)
 
 %%
-%%New figure
+%%
+%%Fig 5.1
 
 x1 = 0 :0.01: 100;
 pd1 = makedist('Normal', 40, 20)
@@ -566,8 +567,6 @@ set(gca,'xticklabel',[])
 set(gca,'ytick',[])
 set(gca,'yticklabel',[])
 set(gca, 'box', 'off')
-xlabel('Disease Severity')
-ylabel('Frequency')
 title('Unvaccinated exposure')
 
 subplot(3,1,2)
@@ -582,6 +581,7 @@ set(gca,'xticklabel',[])
 set(gca,'ytick',[])
 set(gca,'yticklabel',[])
 set(gca, 'box', 'off')
+ylabel('Frequency')
 title('Exposure with one vaccine dose')
 
 subplot(3,1,3)
@@ -596,6 +596,7 @@ set(gca,'xticklabel',[])
 set(gca,'ytick',[])
 set(gca,'yticklabel',[])
 set(gca, 'box', 'off')
+xlabel('Disease Severity')
 title('Exposure with both vaccine doses')
 
 
