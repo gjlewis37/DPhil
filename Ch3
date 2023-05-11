@@ -8,8 +8,8 @@ y = (x-7).*(1-exp(0.16*(x-48)));
 z = y.^2;
 plot(x,z);
 title('S. Aureus temperature dependent growth');
-xlabel('Temperature (Celsius)');
-ylabel('Growth rate');
+xlabel('Temperature (Celsius), T');
+ylabel('Growth rate, r');
 axis([0 50 0 650]);
 set(gca,'YTick',[]);
 
@@ -29,8 +29,8 @@ plot(x1,z1);
 hold off
 
 title('Temperature-dependent growth');
-xlabel('Temperature (Celsius)');
-ylabel('Growth rate');
+xlabel('Temperature (Celsius), T');
+ylabel('Growth rate, r');
 axis([0 50 0 1]);
 set(gca,'YTick',[]);
 legend({'E. coli', 'S. dysenteriae'}, 'Location', 'northwest')
@@ -69,7 +69,7 @@ plot(x2,c2);
 hold off
 
 title('Relative growth at T + x versus T');
-xlabel('Body temperature (Celsius)');
+xlabel('Body temperature (Celsius), T');
 ylabel('Relative Growth');
 legend({'+1 degree fever', '+2 degrees fever', '+3 degrees fever'}, 'Location', 'southwest')
 
@@ -88,7 +88,7 @@ plot (x, y2)
 
 hold off
 
-xlabel('Temperature (Celsius)');
+xlabel('Temperature (Celsius), T');
 ylabel('Relative Growth');
 legend({'E coli', 'Transformed Gamma(2,1)'}, 'Location', 'northwest')
 
@@ -234,4 +234,3 @@ s37a = (1 - ((((37.88-10)*(1-exp(0.260*(37.88-45))))^2)/558.23))*1430
 s37a2 = (1 - ((((37.52-10)*(1-exp(0.260*(37.52-45))))^2)/558.23))*2400
 
 s37a3 = (1 - ((((38.68-10)*(1-exp(0.260*(38.68-45))))^2)/558.23))*750
-
