@@ -8454,6 +8454,7 @@ hold on
 plot([kFDF1 kFDF2])
 hold off
 xlim([0 10000])
+ylim([0 1])
 legend("BDF", "FDF")
 xlabel("D")
 ylabel("k_{NPI}")
